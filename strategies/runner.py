@@ -20,6 +20,59 @@ class StrategyRunner:
         self.factor_engine = FactorEngine()
         self.filter_engine = FilterEngine()
 
+    # 添加在 StrategyRunner 类内部（例如放在 __init__ 之后）
+    @staticmethod
+    def apply_quality_filters(df: pd.DataFrame, remove_risky: bool = True, prefer_healthy: bool = True) -> pd.DataFrame:
+        """
+        对筛选结果进行二次质量过滤
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            原始筛选结果
+        remove_risky : bool
+            是否剔除明显风险标的（如 PE 异常、亏损等）
+        prefer_healthy : bool
+            是否进一步优选量价健康个股（换手率温和、量比适中、PE合理等）
+
+        Returns
+        -------
+        pd.DataFrame
+            过滤后的 DataFrame
+        """
+        if df.empty:
+            return df
+
+        result = df.copy()
+
+        # ---------- 1. 剔除明显风险标的 ----------
+        if remove_risky:
+            # 剔除 PE(TTM) 为 NaN 或 > 200 的股票（可根据市场调整）
+            if "pe_ttm" in result.columns:
+                result = result[result["pe_ttm"].notna()]
+                result = result[result["pe_ttm"] < 200]
+
+            # 剔除 ST、*ST 股票（代码中包含 .ST）
+            result = result[~result["ts_code"].str.contains(".ST", na=False)]
+
+            # 剔除流通市值过小（< 20 亿，即 200000 万元）
+            if "circ_mv" in result.columns:
+                result = result[result["circ_mv"] >= 200000]
+
+        # ---------- 2. 优选量价健康个股（保留满足条件的行） ----------
+        if prefer_healthy:
+            if "turnover" in result.columns:
+                # 换手率 5% ~ 12% 为温和区间
+                result = result[(result["turnover"] >= 5.0) & (result["turnover"] <= 12.0)]
+            if "volume_ratio" in result.columns:
+                # 量比 1.5 ~ 3.5 为健康放量
+                result = result[(result["volume_ratio"] >= 1.5) & (result["volume_ratio"] <= 3.5)]
+            if "pe_ttm" in result.columns:
+                # PE 在 20 ~ 50 倍之间较为合理
+                result = result[(result["pe_ttm"] >= 20) & (result["pe_ttm"] <= 50)]
+
+        return result    
+
     def run(self, strategy_config: Dict[str, Any], ts_codes: Optional[List[str]] = None) -> pd.DataFrame:
         """
         执行策略
@@ -67,6 +120,11 @@ class StrategyRunner:
         if top_n:
             df = df.head(top_n)
 
+        # ---------- 后处理：应用质量过滤（若配置中启用） ----------
+        if config.get("apply_quality_filter", False):
+            df = self.apply_quality_filters(df, 
+                                            remove_risky=config.get("remove_risky", True),
+                                            prefer_healthy=config.get("prefer_healthy", True))
         return df
 
     def _run_window(self, config: Dict[str, Any], ts_codes: Optional[List[str]]) -> pd.DataFrame:
@@ -112,6 +170,11 @@ class StrategyRunner:
         if top_n:
             df = df.head(top_n)
 
+        # ---------- 后处理：应用质量过滤（若配置中启用） ----------
+        if config.get("apply_quality_filter", False):
+            df = self.apply_quality_filters(df, 
+                                            remove_risky=config.get("remove_risky", True),
+                                            prefer_healthy=config.get("prefer_healthy", True))
         return df
 
     def _apply_filters_with_column_ref(self, df: pd.DataFrame, filters: list) -> pd.DataFrame:
