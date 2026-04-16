@@ -1,0 +1,19 @@
+data/
+├── __init__.py
+├── calendar.py                # A股交易日历
+├── sources/
+│   ├── __init__.py
+│   ├── base.py                # DataSource 抽象基类
+│   └── tushare_source.py      # Tushare 实现（仅此一个源）
+├── fetcher.py                 # 数据拉取调度器
+├── loader.py                  # 统一数据加载器
+├── validator.py               # 数据完整性校验（可选）
+└── cache.py                   # 本地 SQLite 缓存管理
+
+
+test
+# 增量更新股票池
+python -m data.fetcher --mode incremental
+
+# 全量拉取指定股票
+python -m data.fetcher --mode full --symbols 002948.SZ --start 20250101 --end 20250414

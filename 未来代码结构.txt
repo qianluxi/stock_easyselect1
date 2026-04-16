@@ -1,0 +1,18 @@
+project/
+│
+├── db/
+│   └── stock.db
+│
+├── core/
+│   ├── data_loader.py
+│   ├── factor_engine.py
+│   ├── filter_engine.py
+│   ├── scoring_engine.py
+│
+├── strategies/
+│   ├── base.py
+│   ├── momentum.py
+│   ├── volume.py
+│
+├── screener.py   ← 主入口（调度）
+└── main.py
