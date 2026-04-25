@@ -1,10 +1,10 @@
 """
-第二阶段使用示例
-展示预设策略和自定义策略的调用方式
+第二阶段使用示例 - 遍历所有预设策略
 """
 
 from pathlib import Path
 from screener import StockScreener
+from strategies.configs import STRATEGY_LIBRARY
 
 
 def main():
@@ -13,46 +13,48 @@ def main():
 
     print("最新交易日:", screener.get_latest_trade_date())
 
-    # ---------- 示例1：运行预设策略 ----------
-    print("\n" + "=" * 60)
-    print("策略1: 健康放量上涨 (单日)")
-    print("=" * 60)
-    result1 = screener.run_strategy("healthy_volume_rise", top_n=10)
-    screener.print_result(result1)
+    # 定义各策略推荐的展示列（若未定义则使用默认列）
+    display_columns_map = {
+        "healthy_volume_rise": ["ts_code", "pct_chg", "volume_ratio", "turnover", "close", "circ_mv", "pe_ttm"],
+        "momentum_breakout": ["ts_code", "ret_5", "vol_ratio_5", "pct_chg", "close"],
+        "ma_golden_cross": ["ts_code", "ma_5", "ma_20", "pct_chg", "volume_ratio"],
+        "low_vol_high_turnover": ["ts_code", "volatility_20", "turnover", "pct_chg"],
+        "atr_breakout": ["ts_code", "atr_14", "pct_chg", "close"],
+        "rsi_oversold_rebound": ["ts_code", "rsi_14", "pct_chg", "close"],
+        "macd_bullish": ["ts_code", "dif", "dea", "macd", "pct_chg"],
+        "value_momentum": ["ts_code", "ret_20", "pe_ttm", "pct_chg", "close"],
+    }
 
-    print("\n" + "=" * 60)
-    print("策略2: 动量突破 (多日窗口)")
-    print("=" * 60)
-    result2 = screener.run_strategy("momentum_breakout", top_n=10)
-    columns = ["ts_code", "ret_5", "vol_ratio_5", "pct_chg", "close"]
-    screener.print_result(result2, columns=columns)
+    # 遍历策略库中的所有策略
+    for i, (strategy_key, strategy_config) in enumerate(STRATEGY_LIBRARY.items(), 1):
+        print("\n" + "=" * 60)
+        print(f"策略{i}: {strategy_config['name']} ({strategy_config.get('type', 'unknown')})")
+        if 'description' in strategy_config:
+            print(f"描述: {strategy_config['description']}")
+        print("=" * 60)
 
-    print("\n" + "=" * 60)
-    print("策略3: 均线金叉")
-    print("=" * 60)
-    result3 = screener.run_strategy("ma_golden_cross", top_n=10)
-    columns = ["ts_code", "ma_5", "ma_20", "pct_chg", "volume_ratio"]
-    screener.print_result(result3, columns=columns)
+        try:
+            result = screener.run_strategy(strategy_key, top_n=10)
+        except Exception as e:
+            print(f"执行失败: {e}")
+            continue
 
-    print("\n" + "=" * 60)
-    print("策略4: 低波高换手")
-    print("=" * 60)
-    result4 = screener.run_strategy("low_vol_high_turnover", top_n=10)
-    columns = ["ts_code", "volatility_20", "turnover", "pct_chg"]
-    screener.print_result(result4, columns=columns)
+        # 获取该策略的推荐展示列
+        columns = display_columns_map.get(strategy_key)
+        screener.print_result(result, columns=columns)
 
-    # ---------- 示例2：自定义策略（临时） ----------
+    # 可选：保留自定义策略示例
     print("\n" + "=" * 60)
-    print("自定义策略: RSI < 30 且 5日涨幅 > 2%")
+    print("自定义策略: RSI < 30 且 当日涨幅 > 2%")
     print("=" * 60)
     custom_config = {
         "name": "自定义RSI超卖",
         "type": "window",
         "window": 30,
-        "factors": ["rsi_14", "ret_5"],
+        "factors": ["rsi_14"],
         "filters": [
             ("rsi_14", "<", 30),
-            ("ret_5", ">", 0.02),
+            ("pct_chg", ">", 2.0),
         ],
         "sort_by": "rsi_14",
         "ascending": True,
@@ -60,8 +62,7 @@ def main():
         "keep_last_only": True,
     }
     result_custom = screener.run_custom_strategy(custom_config)
-    columns = ["ts_code", "rsi_14", "ret_5", "pct_chg", "close"]
-    screener.print_result(result_custom, columns=columns)
+    screener.print_result(result_custom, columns=["ts_code", "rsi_14", "pct_chg", "close"])
 
 
 if __name__ == "__main__":

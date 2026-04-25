@@ -16,7 +16,11 @@ STRATEGY_LIBRARY = {
         "sort_by": "pct_chg",
         "ascending": False,
         "top_n": 20,
-        "description": "当日涨幅>3%，量比>1.5，换手率5%~15%"
+        "description": "当日涨幅>3%，量比>1.5，换手率5%~15%",
+        # 启用二次质量过滤
+        "apply_quality_filter": True,
+        "remove_risky": True,
+        "prefer_healthy": True        
     },
 
     # ---------- 多日窗口策略 ----------
@@ -33,7 +37,10 @@ STRATEGY_LIBRARY = {
         "ascending": False,
         "top_n": 20,
         "keep_last_only": True,
-        "description": "5日涨幅>5%，且5日量比>1.5"
+        "description": "5日涨幅>5%，且5日量比>1.5",
+        "apply_quality_filter": True,
+        "remove_risky": True,
+        "prefer_healthy": False   # 允许高换手、高估值，符合动量特征        
     },
 
     "ma_golden_cross": {
@@ -49,7 +56,10 @@ STRATEGY_LIBRARY = {
         "ascending": False,
         "top_n": 20,
         "keep_last_only": True,
-        "description": "5日均线上穿20日均线，且当日量比>1"
+        "description": "5日均线上穿20日均线，且当日量比>1",
+        "apply_quality_filter": True,
+        "remove_risky": True,
+        "prefer_healthy": False   # 趋势策略，不额外限制量价区间        
     },
 
     "low_vol_high_turnover": {
@@ -66,22 +76,28 @@ STRATEGY_LIBRARY = {
         "ascending": False,
         "top_n": 20,
         "keep_last_only": True,
-        "description": "波动率低但换手率较高，温和上涨"
+        "description": "波动率低但换手率较高，温和上涨",
+        "apply_quality_filter": True,
+        "remove_risky": True,
+        "prefer_healthy": False   # 已有波动率、换手率条件，避免过度过滤
     },
 
     "atr_breakout": {
         "name": "ATR 突破",
         "type": "window",
         "window": 30,
-        "factors": ["atr_14"],
+        "factors": ["atr_14", "atr_2x_pct"], #新增因子atr_2x_pct
         "filters": [
-            ("pct_chg", ">", "2 * atr_14 / close"),  # 涨幅超过 2倍 ATR%
+            ("pct_chg", ">", "atr_2x_pct"),    # 改用列间比较
         ],
         "sort_by": "pct_chg",
         "ascending": False,
         "top_n": 20,
         "keep_last_only": True,
-        "description": "当日涨幅超过2倍ATR波动幅度，强势突破"
+        "description": "当日涨幅超过2倍ATR波动幅度，强势突破",
+        "apply_quality_filter": True,
+        "remove_risky": True,
+        "prefer_healthy": False
     },
 
     "rsi_oversold_rebound": {
@@ -90,14 +106,17 @@ STRATEGY_LIBRARY = {
         "window": 30,
         "factors": ["rsi_14", "ret_5"],
         "filters": [
-            ("rsi_14", "<", 30),
+            ("rsi_14", "<", 40),  #放宽要求，从30改为40
             ("pct_chg", ">", 2.0),
         ],
         "sort_by": "rsi_14",
         "ascending": True,
         "top_n": 20,
         "keep_last_only": True,
-        "description": "RSI<30超卖后出现反弹，当日涨幅>2%"
+        "description": "RSI<30超卖后出现反弹，当日涨幅>2%",
+        "apply_quality_filter": True,
+        "remove_risky": True,
+        "prefer_healthy": False  # 超跌股本身可能量价不健康
     },
 
     "macd_bullish": {
@@ -113,14 +132,17 @@ STRATEGY_LIBRARY = {
         "ascending": False,
         "top_n": 20,
         "keep_last_only": True,
-        "description": "MACD 金叉且柱状图为正"
+        "description": "MACD 金叉且柱状图为正",
+        "apply_quality_filter": True,
+        "remove_risky": True,
+        "prefer_healthy": False
     },
 
     "value_momentum": {
         "name": "估值动量",
         "type": "window",
         "window": 60,
-        "factors": ["ret_20", "pe_ttm"],
+        "factors": ["ret_20"],
         "filters": [
             ("ret_20", ">", 0.10),
             ("pe_ttm", ">", 0),
@@ -130,6 +152,9 @@ STRATEGY_LIBRARY = {
         "ascending": False,
         "top_n": 20,
         "keep_last_only": True,
-        "description": "20日涨幅>10%，且PE在0~40之间"
+        "description": "20日涨幅>10%，且PE在0~40之间",
+        "apply_quality_filter": True,
+        "remove_risky": True,     # 进一步剔除 ST、市值过小
+        "prefer_healthy": False   # 已有 PE<40 条件
     }
 }

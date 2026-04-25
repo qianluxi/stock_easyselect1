@@ -91,6 +91,15 @@ class FactorEngine:
         )
         df.drop(["prev_close", "tr"], axis=1, inplace=True)
         return df
+    
+    @staticmethod
+    def add_atr_2x_pct(df: pd.DataFrame) -> pd.DataFrame:
+        """2倍ATR占收盘价的百分比（用于突破阈值比较）"""
+        df = df.copy()
+        if "atr_14" not in df.columns:
+            raise KeyError("需要先计算 atr_14 才能使用 atr_2x_pct")
+        df["atr_2x_pct"] = 2 * df["atr_14"] / df["close"] * 100  # 转换为百分比数值
+        return df
 
     # ---------- 成交量/量比类因子 ----------
     @staticmethod
@@ -176,6 +185,13 @@ class FactorEngine:
             .reset_index(level=0, drop=True)
         )
         return df
+    
+    @staticmethod
+    def add_atr_2x_pct(df: pd.DataFrame) -> pd.DataFrame:
+        """ATR的2倍占收盘价百分比"""
+        df = df.copy()
+        df["atr_2x_pct"] = 2 * df["atr_14"] / df["close"] * 100
+        return df
 
     # ---------- 批量计算入口 ----------
     @classmethod
@@ -229,6 +245,9 @@ class FactorEngine:
                 result = cls.add_volatility(result, int(parts[1]))
             elif parts[0] == "atr" and len(parts) == 2 and parts[1].isdigit():
                 result = cls.add_atr(result, int(parts[1]))
+            # 在现有 atr 分支后添加
+            elif factor == "atr_2x_pct":
+                result = cls.add_atr_2x_pct(result)
             
             # 成交量类 (vol_ma_5, vol_ratio_5)
             elif parts[0] == "vol" and len(parts) >= 2:
