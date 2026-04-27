@@ -1,25 +1,30 @@
 """
-第二阶段使用示例 - 遍历所有策略 + 共振分析 + 导出 Excel
+盘中实时筛选（混合数据源方案） + 共振分析 + 导出 Excel
+每天 14:30 后运行，利用历史数据库 + efinance 实时行情
 """
 
 from pathlib import Path
 import pandas as pd
 from screener import StockScreener
+from core.efinance_live_loader import EfinanceLiveLoader
 from strategies.configs import STRATEGY_LIBRARY
 
 
 def main():
     db_path = Path(__file__).parent / "db" / "stock.db"
+    live_loader = EfinanceLiveLoader(str(db_path))
+
     screener = StockScreener(str(db_path))
-    latest_date = screener.get_latest_trade_date()
-    print("最新交易日:", latest_date)
+    screener.set_live_loader(live_loader)
 
-    # ========== 涨停过滤开关 ==========
-    # 可选值："all"（保守，过滤所有涨停）、"strict"（稳健，只过滤一字板/T字板）、None（不过滤）
-    LIMIT_UP_FILTER = "all"       # 用户在此修改
-    # ==================================
+    # 全局默认涨停过滤，策略配置中的设置会覆盖它
+    DEFAULT_LIMIT_UP_FILTER = "all"
 
-    # 定义各策略展示列
+    # 用于收集各策略结果和共振统计
+    all_results = {}
+    resonance = {}       # {ts_code: {"count": n, "strategies": [name1, name2]}}
+
+    # 定义各策略推荐展示列（与盘后一致）
     display_columns_map = {
         "healthy_volume_rise": ["ts_code", "pct_chg", "volume_ratio", "turnover", "close", "circ_mv", "pe_ttm"],
         "momentum_breakout": ["ts_code", "ret_5", "vol_ratio_5", "pct_chg", "close"],
@@ -29,33 +34,36 @@ def main():
         "rsi_oversold_rebound": ["ts_code", "rsi_14", "pct_chg", "close"],
         "macd_bullish": ["ts_code", "dif", "dea", "macd", "pct_chg"],
         "value_momentum": ["ts_code", "ret_20", "pe_ttm", "pct_chg", "close"],
+        "live_non_limit_up_healthy": ["ts_code", "pct_chg", "volume_ratio", "turnover", "close", "pe_ttm"],
+        "live_safe_healthy": ["ts_code", "pct_chg", "volume_ratio", "turnover", "close", "pe_ttm"],
     }
 
-    # 用于收集每个策略的结果（用于共振分析和导出）
-    all_results = {}
-    # 用于共振统计：{ts_code: {"count": n, "strategies": [name1, name2]}}
-    resonance = {}
-
-    # 遍历策略库中的所有策略
-    for strategy_key, strategy_config in STRATEGY_LIBRARY.items():
-        strategy_name = strategy_config["name"]
+    # 遍历所有策略
+    for key, cfg in STRATEGY_LIBRARY.items():
+        name = cfg["name"]
         print("\n" + "=" * 60)
-        print(f"策略: {strategy_name} ({strategy_config.get('type', 'unknown')})")
-        if "description" in strategy_config:
-            print(f"描述: {strategy_config['description']}")
+        print(f"【实时】策略: {name}")
+        if "description" in cfg:
+            print(f"描述: {cfg['description']}")
         print("=" * 60)
 
+        # 涨停过滤：策略自身优先，否则用全局默认
+        filter_mode = cfg.get("exclude_limit_up", DEFAULT_LIMIT_UP_FILTER)
+
         try:
-            result = screener.run_strategy(strategy_key, top_n=50,
-                                           exclude_limit_up=LIMIT_UP_FILTER)  # 传递开关
+            result = screener.run_strategy(
+                key,
+                top_n=20,
+                exclude_limit_up=filter_mode,
+            )
         except Exception as e:
             print(f"执行失败: {e}")
             result = pd.DataFrame()
 
-        all_results[strategy_name] = result
+        all_results[name] = result
 
         # 打印结果
-        columns = display_columns_map.get(strategy_key)
+        columns = display_columns_map.get(key)
         if not result.empty:
             screener.print_result(result, columns=columns)
         else:
@@ -67,38 +75,7 @@ def main():
                 if code not in resonance:
                     resonance[code] = {"count": 0, "strategies": []}
                 resonance[code]["count"] += 1
-                resonance[code]["strategies"].append(strategy_name)
-
-    # ---------- 自定义策略 ----------
-    print("\n" + "=" * 60)
-    print("自定义策略: RSI < 30 且 当日涨幅 > 2%")
-    print("=" * 60)
-    custom_config = {
-        "name": "自定义RSI超卖",
-        "type": "window",
-        "window": 30,
-        "factors": ["rsi_14"],
-        "filters": [
-            ("rsi_14", "<", 30),
-            ("pct_chg", ">", 2.0),
-        ],
-        "sort_by": "rsi_14",
-        "ascending": True,
-        "top_n": 10,
-        "keep_last_only": True,
-        "exclude_limit_up": LIMIT_UP_FILTER,   # 添加这一行
-    }
-    custom_result = screener.run_custom_strategy(custom_config)
-    all_results["自定义RSI超卖"] = custom_result
-    if not custom_result.empty:
-        screener.print_result(custom_result, columns=["ts_code", "rsi_14", "pct_chg", "close"])
-        for code in custom_result["ts_code"]:
-            if code not in resonance:
-                resonance[code] = {"count": 0, "strategies": []}
-            resonance[code]["count"] += 1
-            resonance[code]["strategies"].append("自定义RSI超卖")
-    else:
-        print("未找到符合条件的股票。")
+                resonance[code]["strategies"].append(name)
 
     # ---------- 共振分析 ----------
     print("\n" + "=" * 60)
@@ -120,12 +97,14 @@ def main():
         print("无股票同时被多个策略选中。")
 
     # ---------- 导出 Excel ----------
-    excel_path = Path(__file__).parent / f"选股结果_{latest_date}.xlsx"
+    # 使用当天日期作为文件名
+    from datetime import datetime
+    today_str = datetime.today().strftime("%Y-%m-%d")
+    excel_path = Path(__file__).parent / f"选股结果_实时_{today_str}.xlsx"
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
         # 导出各策略结果
         for sheet_name, df in all_results.items():
-            # Excel sheet 名称最长 31 字符
-            safe_name = sheet_name[:31]
+            safe_name = sheet_name[:31]  # Excel sheet 名称最长 31 字符
             df.to_excel(writer, sheet_name=safe_name, index=False)
         # 导出共振分析
         if not resonance_df.empty:

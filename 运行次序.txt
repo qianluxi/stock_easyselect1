@@ -1,0 +1,8 @@
+# 增量更新股票池
+python -m data.fetcher --mode incremental
+
+# 运行所有策略
+python main.py
+
+# 运行所有策略（根据实时数据）
+python main_live.py
