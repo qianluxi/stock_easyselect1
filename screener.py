@@ -45,8 +45,9 @@ class StockScreener:
         return self.runner.run(config)
 
     def get_latest_trade_date(self) -> Optional[str]:
-        """获取最新交易日"""
-        return self.runner.loader.get_latest_trade_date()
+        """获取最新交易日（通过 runner 的交易日历）"""
+        latest = self.runner.calendar.latest_trading_day()
+        return latest.strftime("%Y-%m-%d") if latest else None
 
     def print_result(self, df: pd.DataFrame, columns: Optional[List[str]] = None) -> None:
         """格式化打印结果"""
@@ -60,3 +61,8 @@ class StockScreener:
             ]
         available = [col for col in columns if col in df.columns]
         print(df[available].to_string(index=False))
+
+    def set_live_loader(self, live_loader):
+        """切换到实时数据加载器"""
+        self.runner.loader = live_loader
+        print("已切换至 efinance 实时行情模式")
