@@ -1,18 +1,20 @@
-project/
-│
-├── db/
-│   └── stock.db
-│
+tushare_select1/
 ├── core/
 │   ├── data_loader.py
-│   ├── factor_engine.py
-│   ├── filter_engine.py
-│   ├── scoring_engine.py
-│
+│   ├── factor_engine.py      → 升级为 indicator_engine.py
+│   ├── feature_builder.py    ★ 新增
+│   ├── label_engine.py       ★ 新增
+│   └── backtester.py         (保留)
+├── alpha/
+│   ├── pipeline.py           ★ 新增
+│   ├── diagnostics.py        ★ 新增
+│   └── models/               (保存训练好的模型)
+├── db/
+│   ├── stock.db              (原有表 + factor_values + stock_basic)
+│   └── build_factor_db.py    ★ 新增
 ├── strategies/
-│   ├── base.py
-│   ├── momentum.py
-│   ├── volume.py
-│
-├── screener.py   ← 主入口（调度）
-└── main.py
+│   └── configs.py            (新增 ML 策略)
+├── main.py
+├── main_live.py
+├── main_backtest.py
+└── main_alpha.py             ★ 新增：执行训练/预测的主入口
