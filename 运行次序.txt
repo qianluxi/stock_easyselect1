@@ -1,0 +1,28 @@
+#在tools文件夹下运行以下程序，可以生成流动性前100的ETF基金
+generate_etf_pool.py
+
+# 运行以下命令，起始日期设为 5 年前的今天（例如今天是 2026-04-29，则用 20210429）
+python -m data.fetcher --mode full --start 20210429
+
+#全量拉取 ETF（最近5年）
+python -m data.fetcher --mode full --pool_type etf --start 20210101
+
+#增量更新 ETF
+python -m data.fetcher --mode incremental --pool_type etf
+
+
+
+#时间区间灵活组合 --start 和 --end
+python -m data.fetcher --mode full --start 20230101 --end 20250429
+
+# 增量更新股票池
+python -m data.fetcher --mode incremental
+
+
+
+# 运行所有策略
+python main.py
+# 在\strategies\runner.py里的def apply_limit_up_filter修改过滤涨停条件，可以改为过滤大于3.2%的
+
+# 运行所有策略（根据实时数据）
+python main_live.py

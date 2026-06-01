@@ -1,7 +1,7 @@
 """
-因子计算引擎
+因子计算引擎（扩展版）
 封装常用的技术指标和因子，支持多股票面板数据（DataFrame）
-所有方法均为静态方法，接收 DataFrame 并返回添加新列后的 DataFrame
+新增：复合动量得分、风险调整比值、60日收益率等因子
 """
 
 import pandas as pd
@@ -9,7 +9,7 @@ import numpy as np
 
 
 class FactorEngine:
-    """因子计算引擎"""
+    """因子计算引擎，所有方法返回添加新列后的 DataFrame"""
 
     # ---------- 收益率类因子 ----------
     @staticmethod
@@ -61,7 +61,7 @@ class FactorEngine:
     # ---------- 波动率类因子 ----------
     @staticmethod
     def add_volatility(df: pd.DataFrame, period: int = 20) -> pd.DataFrame:
-        """N 日波动率（收益率标准差年化）"""
+        """N 日年化波动率（收益率标准差 * sqrt(252)）"""
         df = df.copy()
         ret = df.groupby("ts_code")["close"].pct_change()
         vol = ret.groupby(df["ts_code"]).rolling(period).std().reset_index(level=0, drop=True)
@@ -70,10 +70,7 @@ class FactorEngine:
 
     @staticmethod
     def add_atr(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
-        """
-        平均真实波幅 (ATR)
-        需要 high, low, close 列
-        """
+        """平均真实波幅 (ATR)，需要 high, low, close 列"""
         df = df.copy().sort_values(["ts_code", "trade_date"])
         df["prev_close"] = df.groupby("ts_code")["close"].shift(1)
         df["tr"] = np.maximum(
@@ -90,6 +87,15 @@ class FactorEngine:
             .reset_index(level=0, drop=True)
         )
         df.drop(["prev_close", "tr"], axis=1, inplace=True)
+        return df
+
+    @staticmethod
+    def add_atr_2x_pct(df: pd.DataFrame) -> pd.DataFrame:
+        """2倍ATR占收盘价的百分比（用于突破阈值比较）"""
+        df = df.copy()
+        if "atr_14" not in df.columns:
+            raise KeyError("需要先计算 atr_14 才能使用 atr_2x_pct")
+        df["atr_2x_pct"] = 2 * df["atr_14"] / df["close"] * 100
         return df
 
     # ---------- 成交量/量比类因子 ----------
@@ -162,7 +168,7 @@ class FactorEngine:
         df.drop(["ema_fast", "ema_slow"], axis=1, inplace=True)
         return df
 
-    # ---------- 估值相关因子（需要 daily_basic 数据） ----------
+    # ---------- 估值相关因子 ----------
     @staticmethod
     def add_pe_percentile(df: pd.DataFrame, period: int = 252) -> pd.DataFrame:
         """PE(TTM) 在 N 日内的分位数（需已加载 pe_ttm）"""
@@ -171,10 +177,95 @@ class FactorEngine:
             raise KeyError("缺少 pe_ttm 列，请确保加载数据时包含 daily_basic")
         df[f"pe_rank_{period}"] = (
             df.groupby("ts_code")["pe_ttm"]
-            .rolling(period, min_periods=period//2)
+            .rolling(period, min_periods=period // 2)
             .apply(lambda x: (x.iloc[-1] > x).mean(), raw=False)
             .reset_index(level=0, drop=True)
         )
+        return df
+
+    # ---------- 新增：趋势与量能稳定性因子 ----------
+    @staticmethod
+    def add_slope(df: pd.DataFrame, period: int = 120) -> pd.DataFrame:
+        """
+        计算每只股票收盘价的线性回归斜率（滚动窗口）
+        斜率 = (N * Σ(xy) - Σx * Σy) / (N * Σ(x²) - (Σx)²)
+        x = 0,1,...,N-1
+        """
+        df = df.copy().sort_values(["ts_code", "trade_date"])
+        x = np.arange(period)
+        x_mean = x.mean()
+        sum_x = x.sum()
+        sum_x_sq = (x ** 2).sum()
+
+        def _calc_slope(series):
+            if len(series) < period:
+                return np.nan
+            y = series.values[-period:]
+            sum_y = y.sum()
+            sum_xy = (x * y).sum()
+            slope = (period * sum_xy - sum_x * sum_y) / (period * sum_x_sq - sum_x ** 2)
+            return slope
+
+        df[f"slope_{period}"] = (
+            df.groupby("ts_code")["close"]
+            .rolling(period, min_periods=period)
+            .apply(_calc_slope, raw=False)
+            .reset_index(level=0, drop=True)
+        )
+        return df
+
+    @staticmethod
+    def add_volume_ratio_max(df: pd.DataFrame, period: int = 120) -> pd.DataFrame:
+        """
+        计算滚动窗口内单日量比的最大值（用于过滤异常放量）
+        量比 = 当日成交量 / 过去 period 日均量（不含当日）
+        """
+        df = df.copy().sort_values(["ts_code", "trade_date"])
+        df["vol_ma_ex"] = (
+            df.groupby("ts_code")["vol"]
+            .shift(1)
+            .rolling(period, min_periods=period)
+            .mean()
+            .reset_index(level=0, drop=True)
+        )
+        df["vol_ratio_daily"] = df["vol"] / df["vol_ma_ex"]
+        df[f"volume_ratio_max{period}"] = (
+            df.groupby("ts_code")["vol_ratio_daily"]
+            .rolling(period, min_periods=period)
+            .max()
+            .reset_index(level=0, drop=True)
+        )
+        df.drop(["vol_ma_ex", "vol_ratio_daily"], axis=1, inplace=True)
+        return df
+
+    # ---------- 新增：复合动量与风险调整因子 ----------
+    @staticmethod
+    def add_momentum_score(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        计算复合动量得分 = 0.5*ret_60 + 0.3*ret_20 + 0.2*ret_5
+        需确保 ret_5, ret_20, ret_60 列已存在，否则将自动计算。
+        """
+        df = df.copy()
+        # 自动补全缺失的收益率列
+        for period in [5, 20, 60]:
+            col = f"ret_{period}"
+            if col not in df.columns:
+                df = FactorEngine.add_return(df, period)
+        df["momentum_score"] = 0.5 * df["ret_60"] + 0.3 * df["ret_20"] + 0.2 * df["ret_5"]
+        return df
+
+    @staticmethod
+    def add_momentum_ratio(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        计算风险调整动量比 = ret_60 / volatility_60
+        需确保 ret_60 和 volatility_60 列存在，否则将自动计算。
+        """
+        df = df.copy()
+        if "ret_60" not in df.columns:
+            df = FactorEngine.add_return(df, 60)
+        if "volatility_60" not in df.columns:
+            df = FactorEngine.add_volatility(df, 60)
+        df["momentum_ratio"] = df["ret_60"] / df["volatility_60"]
         return df
 
     # ---------- 批量计算入口 ----------
@@ -186,20 +277,12 @@ class FactorEngine:
         Parameters
         ----------
         df : pd.DataFrame
-            原始数据
+            原始数据（需包含 ts_code, trade_date, 以及对应因子所需的列）
         factor_list : list
-            因子名称列表，支持灵活命名，例如：
-            - 'ret_5' 或 'return_5'
-            - 'ma_5', 'ema_5'
-            - 'bias_5'
-            - 'volatility_20'
-            - 'atr_14'
-            - 'vol_ma_5', 'vol_ratio_5'
-            - 'obv'
-            - 'consecutive_up_3'
-            - 'rsi_14'
-            - 'macd'
-            - 'pe_rank_252'
+            因子名称列表，支持灵活命名。新增因子名示例：
+            - 'ret_60' : 60日收益率
+            - 'momentum_score' : 复合动量得分 (0.5*ret_60 + 0.3*ret_20 + 0.2*ret_5)
+            - 'momentum_ratio' : 风险调整比值 (ret_60 / volatility_60)
 
         Returns
         -------
@@ -210,13 +293,13 @@ class FactorEngine:
         for factor in factor_list:
             parts = factor.split("_")
             
-            # 收益率类 (ret_5, return_5)
+            # ---- 收益率类 (支持 ret_60 等) ----
             if parts[0] in ("ret", "return") and len(parts) == 2 and parts[1].isdigit():
                 result = cls.add_return(result, int(parts[1]))
             elif parts[0] == "logret" and len(parts) == 2 and parts[1].isdigit():
                 result = cls.add_log_return(result, int(parts[1]))
             
-            # 均线类 (ma_5, ema_5)
+            # ---- 均线类 ----
             elif parts[0] == "ma" and len(parts) == 2 and parts[1].isdigit():
                 result = cls.add_ma(result, int(parts[1]))
             elif parts[0] == "ema" and len(parts) == 2 and parts[1].isdigit():
@@ -224,13 +307,15 @@ class FactorEngine:
             elif parts[0] == "bias" and len(parts) == 2 and parts[1].isdigit():
                 result = cls.add_ma_deviation(result, int(parts[1]))
             
-            # 波动率类
+            # ---- 波动率类 (支持 volatility_60 等) ----
             elif parts[0] == "volatility" and len(parts) == 2 and parts[1].isdigit():
                 result = cls.add_volatility(result, int(parts[1]))
-            elif parts[0] == "atr" and len(parts) == 2 and parts[1].isdigit():
+            elif parts[0] == "atr" and len(parts) >= 2 and parts[1].isdigit():
                 result = cls.add_atr(result, int(parts[1]))
+            elif factor == "atr_2x_pct":
+                result = cls.add_atr_2x_pct(result)
             
-            # 成交量类 (vol_ma_5, vol_ratio_5)
+            # ---- 成交量类 ----
             elif parts[0] == "vol" and len(parts) >= 2:
                 if parts[1] == "ma" and len(parts) == 3 and parts[2].isdigit():
                     result = cls.add_volume_ma(result, int(parts[2]))
@@ -239,26 +324,34 @@ class FactorEngine:
                 else:
                     print(f"警告: 未知成交量因子 '{factor}'，已跳过")
             
-            # OBV
+            # ---- 新增：斜率因子 ----
+            elif parts[0] == "slope" and len(parts) == 2 and parts[1].isdigit():
+                result = cls.add_slope(result, int(parts[1]))
+            
+            # ---- 新增：最大量比因子 ----
+            elif factor.startswith("volume_ratio_max") and factor[len("volume_ratio_max"):].isdigit():
+                period = int(factor[len("volume_ratio_max"):])
+                result = cls.add_volume_ratio_max(result, period)
+            
+            # ---- 新增：复合动量得分 ----
+            elif factor == "momentum_score":
+                result = cls.add_momentum_score(result)
+            
+            # ---- 新增：风险调整动量比 ----
+            elif factor == "momentum_ratio":
+                result = cls.add_momentum_ratio(result)
+            
+            # ---- 其他已有因子 ----
             elif factor == "obv":
                 result = cls.add_obv(result)
-            
-            # 连续上涨 (consecutive_up_3)
             elif parts[0] == "consecutive" and parts[1] == "up" and len(parts) == 3 and parts[2].isdigit():
                 result = cls.add_consecutive_up_days(result, int(parts[2]))
-            
-            # RSI
             elif parts[0] == "rsi" and len(parts) == 2 and parts[1].isdigit():
                 result = cls.add_rsi(result, int(parts[1]))
-            
-            # MACD
             elif factor == "macd":
                 result = cls.add_macd(result)
-            
-            # PE 分位数
             elif parts[0] == "perank" and len(parts) == 2 and parts[1].isdigit():
                 result = cls.add_pe_percentile(result, int(parts[1]))
-            
             else:
                 print(f"警告: 未知因子 '{factor}'，已跳过")
         return result
