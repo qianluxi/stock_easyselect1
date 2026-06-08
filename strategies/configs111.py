@@ -5,16 +5,16 @@
 
 STRATEGY_LIBRARY = {
 # ---------- 单日策略 ----------
+    # ---------- 单日策略 ----------
     "healthy_volume_rise": {
         "name": "健康放量上涨",
         "type": "single_day",
-        "factors": ["vol_ratio_5", "ret_40"],   # 添加 ret_40
+        "factors": ["vol_ratio_5"],   # 原先缺失，现已补充
         "filters": [
             ("pct_chg", ">", 3.0),
             ("vol_ratio_5", ">", 1.5),
-            ("turnover_rate", ">", 5.0),
+            ("turnover_rate", ">", 5.0),    # 原名 turnover，改为 turnover_rate
             ("turnover_rate", "<", 15.0),
-            ("ret_40", "<",2),               # 过滤40日涨幅超过15%的个股
         ],
         "sort_by": "pct_chg",
         "ascending": False,
@@ -30,11 +30,10 @@ STRATEGY_LIBRARY = {
         "name": "动量突破",
         "type": "window",
         "window": 10,
-        "factors": ["ret_5", "vol_ratio_5", "ret_40"],
+        "factors": ["ret_5", "vol_ratio_5"],
         "filters": [
             ("ret_5", ">", 0.05),
             ("vol_ratio_5", ">", 1.5),
-            ("ret_40", "<",2),
         ],
         "sort_by": "ret_5",
         "ascending": False,
@@ -50,11 +49,10 @@ STRATEGY_LIBRARY = {
         "name": "均线金叉",
         "type": "window",
         "window": 20,
-        "factors": ["ma_5", "ma_20", "vol_ratio_5", "ret_40"],
+        "factors": ["ma_5", "ma_20", "vol_ratio_5"],  # 补充量比因子
         "filters": [
-            ("ma_5", ">", "ma_20"),
+            ("ma_5", ">", "ma_20"),          # 列间比较，runner 已支持
             ("vol_ratio_5", ">", 1.0),
-            ("ret_40", "<",2),
         ],
         "sort_by": "pct_chg",
         "ascending": False,
@@ -70,12 +68,11 @@ STRATEGY_LIBRARY = {
         "name": "低波高换手",
         "type": "window",
         "window": 20,
-        "factors": ["volatility_20", "vol_ratio_5", "ret_40"],
+        "factors": ["volatility_20", "vol_ratio_5"],
         "filters": [
             ("volatility_20", "<", 0.40),
-            ("turnover_rate", ">", 3.5),
+            ("turnover_rate", ">", 3.5),    # turnover → turnover_rate
             ("pct_chg", ">", 2.0),
-            ("ret_40", "<",2),
         ],
         "sort_by": "turnover_rate",
         "ascending": False,
@@ -91,10 +88,9 @@ STRATEGY_LIBRARY = {
         "name": "ATR 突破",
         "type": "window",
         "window": 30,
-        "factors": ["atr_14", "atr_2x_pct", "ret_40"],
+        "factors": ["atr_14", "atr_2x_pct"],
         "filters": [
-            ("pct_chg", ">", "atr_2x_pct"),
-            ("ret_40", "<",2),
+            ("pct_chg", ">", "atr_2x_pct"),   # 列间比较
         ],
         "sort_by": "pct_chg",
         "ascending": False,
@@ -110,11 +106,10 @@ STRATEGY_LIBRARY = {
         "name": "RSI 超跌反弹",
         "type": "window",
         "window": 30,
-        "factors": ["rsi_14", "ret_5", "ret_40"],
+        "factors": ["rsi_14", "ret_5"],
         "filters": [
             ("rsi_14", "<", 40),
             ("pct_chg", ">", 2.0),
-            ("ret_40", "<",2),
         ],
         "sort_by": "rsi_14",
         "ascending": True,
@@ -130,11 +125,10 @@ STRATEGY_LIBRARY = {
         "name": "MACD 多头",
         "type": "window",
         "window": 30,
-        "factors": ["macd", "ret_40"],
+        "factors": ["macd"],
         "filters": [
-            ("dif", ">", "dea"),
+            ("dif", ">", "dea"),   # 列间比较
             ("macd", ">", 0),
-            ("ret_40", "<",2),
         ],
         "sort_by": "macd",
         "ascending": False,
@@ -150,12 +144,11 @@ STRATEGY_LIBRARY = {
         "name": "估值动量",
         "type": "window",
         "window": 60,
-        "factors": ["ret_20", "ret_40"],
+        "factors": ["ret_20"],
         "filters": [
             ("ret_20", ">", 0.10),
             ("pe_ttm", ">", 0),
             ("pe_ttm", "<", 40),
-            ("ret_40", "<",2),
         ],
         "sort_by": "ret_20",
         "ascending": False,
@@ -171,13 +164,12 @@ STRATEGY_LIBRARY = {
     "live_non_limit_up_healthy": {
         "name": "非涨停健康放量(实时)",
         "type": "single_day",
-        "factors": ["vol_ratio_5", "ret_40"],
+        "factors": ["vol_ratio_5"],    # 声明需要的因子
         "filters": [
             ("pct_chg", ">", 2.0),
             ("vol_ratio_5", ">", 1.2),
-            ("turnover_rate", ">", 3.0),
+            ("turnover_rate", ">", 3.0),       # 原 between 改为两条独立条件
             ("turnover_rate", "<", 20.0),
-            ("ret_40", "<",2),
         ],
         "sort_by": "pct_chg",
         "ascending": False,
@@ -190,13 +182,12 @@ STRATEGY_LIBRARY = {
     "live_safe_healthy": {
         "name": "安全健康放量(实时，全过滤涨停)",
         "type": "single_day",
-        "factors": ["vol_ratio_5", "ret_40"],
+        "factors": ["vol_ratio_5"],
         "filters": [
             ("pct_chg", ">", 1.0),
             ("vol_ratio_5", ">", 1.0),
             ("turnover_rate", ">", 2.0),
             ("turnover_rate", "<", 30.0),
-            ("ret_40", "<",2),
         ],
         "sort_by": "pct_chg",
         "ascending": False,
@@ -205,30 +196,29 @@ STRATEGY_LIBRARY = {
         "exclude_limit_up": "all",
     },
 
-    # ---------- 慢牛低换手 ----------
+    # ---------- 新增策略：慢牛低换手 ----------
+
     "slow_bull": {
-        "name": "慢牛低换手",
+        "name": "慢牛低换手",                          # 策略名称
         "description": "半年内小步上涨，成交量稳定，换手率低，无异常放量",
-        "type": "window",
-        "window": 120,
+        "type": "window",                             # 窗口策略，需回看历史数据
+        "window": 120,                                # 回看 120 个交易日（约半年）
         "factors": [
-            "slope_120",
-            "volatility_120",
-            "volume_ratio_max120",
-            "ret_40",                          # 新增
+            "slope_120",                              # 120日收盘价线性回归斜率（趋势强度）
+            "volatility_120",                         # 120日年化波动率（价格稳定性）
+            "volume_ratio_max120"                     # 120日内单日量比的最大值（防爆量）
         ],
         "filters": [
-            ("slope_120", ">", 0),
-            ("slope_120", "<", 0.005),
-            ("volatility_120", "<", 0.30),
-            ("turnover_rate", "<", 3.0),
-            ("volume_ratio_max120", "<", 3.0),
-            ("ret_40", "<",2),              # 新增，即使慢牛也过滤短期过热
+            ("slope_120", ">", 0),                    # 斜率必须为正（上涨趋势）
+            ("slope_120", "<", 0.005),                # 斜率小于0.005（缓慢上涨，约年化60%） # 斜率上限放大4倍
+            ("volatility_120", "<", 0.30),            # 年化波动率 < 30%（要求走势平稳） # 波动率放宽到50%
+            ("turnover_rate", "<", 3.0),              # 最新换手率 < 3%（不放量） # 换手率放宽到6%
+            ("volume_ratio_max120", "<", 3.0),        # 半年内任何一天成交量不超过平均的3倍（无异常放量） # 最大量比放宽到5倍
         ],
-        "sort_by": "slope_120",
+        "sort_by": "slope_120",                       # 按斜率从大到小排序（更强势的慢牛靠前）
         "ascending": False,
         "top_n": 20,
-        "keep_last_only": True,
+        "keep_last_only": True,                       # 仅输出最新一天的符合条件的股票
     },
 
     #-----------------以下是ETF的策略------------------------
@@ -240,7 +230,7 @@ STRATEGY_LIBRARY = {
         "factors": ["ret_20", "ret_40"],
         "filters": [
             ("ret_20", ">", 0.05),      # 20日涨幅 > 5%
-            ("ret_40", "<",2),      # 近40日涨幅不能过大（<15%）
+            ("ret_40", "<", 0.6),      # 近40日涨幅不能过大（<15%）
         ],
         "sort_by": "ret_20",
         "ascending": False,
@@ -258,7 +248,7 @@ STRATEGY_LIBRARY = {
         "filters": [
             ("ma_5", ">", "ma_20"),
             ("vol_ratio_5", ">", 1.2),
-            ("ret_40", "<",2),
+            ("ret_40", "<", 0.6),
         ],
         "sort_by": "vol_ratio_5",
         "ascending": False,
@@ -276,7 +266,7 @@ STRATEGY_LIBRARY = {
         "filters": [
             ("volatility_20", "<", 0.30),
             ("close", ">", "ma_20"),
-            ("ret_40", "<",2),
+            ("ret_40", "<", 0.6),
         ],
         "sort_by": "volatility_20",
         "ascending": True,
@@ -294,7 +284,7 @@ STRATEGY_LIBRARY = {
         "filters": [
             ("rsi_14", "<", 40),
             ("pct_chg", ">", 2.0),
-            ("ret_40", "<",2),      # 避免前期涨幅过大的“假超跌”
+            ("ret_40", "<", 0.6),      # 避免前期涨幅过大的“假超跌”
         ],
         "sort_by": "rsi_14",
         "ascending": True,
@@ -311,7 +301,7 @@ STRATEGY_LIBRARY = {
         "factors": ["atr_14", "atr_2x_pct", "ret_40"],
         "filters": [
             ("pct_chg", ">", "atr_2x_pct"),
-            ("ret_40", "<",2),      # 防止追高前期已大幅上涨的 ETF
+            ("ret_40", "<", 0.6),      # 防止追高前期已大幅上涨的 ETF
         ],
         "sort_by": "pct_chg",
         "ascending": False,
@@ -329,7 +319,7 @@ STRATEGY_LIBRARY = {
         "factors": ["momentum_score", "ret_40"],
         "filters": [
             ("momentum_score", ">", 0.0),
-            ("ret_40", "<",2),      # 综合动量也得避免短期过热
+            ("ret_40", "<", 0.6),      # 综合动量也得避免短期过热
         ],
         "sort_by": "momentum_score",
         "ascending": False,
@@ -346,7 +336,7 @@ STRATEGY_LIBRARY = {
         "factors": ["momentum_ratio", "ret_20", "ret_40"],
         "filters": [
             ("ret_20", ">", 0.02),
-            ("ret_40", "<",2),
+            ("ret_40", "<", 0.6),
         ],
         "sort_by": "momentum_ratio",
         "ascending": False,
@@ -363,7 +353,7 @@ STRATEGY_LIBRARY = {
         "factors": ["ret_60", "momentum_score", "ret_40"],
         "filters": [
             ("ret_60", ">", 0.05),
-            ("ret_40", "<",2),      # 即使长周期好，也不能短期过热
+            ("ret_40", "<", 0.6),      # 即使长周期好，也不能短期过热
         ],
         "sort_by": "momentum_score",
         "ascending": False,
