@@ -1,5 +1,6 @@
 """
 策略运行器（增强版：支持股票/ETF 双池，自动处理列间比较，补齐关键列）
+新增：通过 config.USE_RET40_FILTER 全局控制 ret_40 过滤的启用/禁用
 """
 import pandas as pd
 import numpy as np
@@ -8,6 +9,7 @@ from core.filter_engine import FilterEngine
 from core.factor_engine import FactorEngine
 from data.loader import DataLoader
 from data.calendar import TradingCalendar
+from strategies.configs import USE_RET40_FILTER  # 全局开关
 
 
 class StrategyRunner:
@@ -45,7 +47,6 @@ class StrategyRunner:
         )
         if df.empty:
             return pd.DataFrame()
-        
 
         # 3. 统一列名
         df = df.reset_index()
@@ -55,6 +56,9 @@ class StrategyRunner:
             df.rename(columns={'volume': 'vol'}, inplace=True)
         if 'turnover_rate' not in df.columns:
             df['turnover_rate'] = np.nan
+
+        # 填充收盘价，消除停牌导致的缺失，保证收益率因子可计算
+        df['close'] = df.groupby('ts_code')['close'].ffill()
 
         # 4. 计算因子
         factor_list = config.get("factors", [])
@@ -68,6 +72,10 @@ class StrategyRunner:
 
         # 6. 获取过滤条件
         filters = config.get("filters", [])
+
+        # 全局开关：若禁用 ret_40 过滤，则移除所有 ret_40 条件
+        if not USE_RET40_FILTER:
+            filters = [cond for cond in filters if cond[0] != "ret_40"]
 
         # 7. 清理无法计算 ret 因子的股票（避免 NaN 导致过滤失效）
         for cond in filters:
@@ -130,20 +138,18 @@ class StrategyRunner:
 
         return df
 
-    # def _get_pool(self, pool_type: str = "stock"):
-    #     if pool_type == "etf":
-    #         try:
-    #             from etf_pool import ETF_POOL
-    #             return ETF_POOL
-    #         except ImportError:
-    #             print("警告：未找到 etf_pool.py，ETF 池为空")
-    #             return []
-    #     else:
-    #         try:
-    #             from stock_pool import STOCK_POOL
-    #             return STOCK_POOL
-    #         except ImportError:
-    #             return []
-
     def _get_pool(self, pool_type: str = "stock"):
-        return ['000001.SZ', '000002.SZ', ...]  # 粘贴全部 92 只代码
+        """根据池类型返回对应的股票/ETF 列表"""
+        if pool_type == "etf":
+            try:
+                from etf_pool import ETF_POOL
+                return ETF_POOL
+            except ImportError:
+                print("警告：未找到 etf_pool.py，ETF 池为空")
+                return []
+        else:
+            try:
+                from stock_pool import STOCK_POOL
+                return STOCK_POOL
+            except ImportError:
+                return []

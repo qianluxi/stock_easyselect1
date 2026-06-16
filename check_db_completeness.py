@@ -20,8 +20,8 @@ def main():
     calendar = TradingCalendar("db/stock.db")
     
     # 检查的日期范围（根据实际情况调整）
-    end_date = "2026-06-08"
-    start_date = "2026-03-01"
+    end_date = "2026-06-14"
+    start_date = "2026-01-25"
     
     # 将输出重定向到文件和控制台
     class Tee:
