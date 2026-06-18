@@ -371,3 +371,7 @@ STRATEGY_LIBRARY = {
         "keep_last_only": True,
     }
 }
+
+# ========== 全局开关 ==========
+# 是否启用 ret_40 过滤（近40日涨幅限制），True 表示启用，False 表示禁用
+USE_RET40_FILTER = False

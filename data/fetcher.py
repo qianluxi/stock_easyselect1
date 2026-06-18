@@ -1,12 +1,13 @@
 """
-数据拉取调度器（优化版：按交易日批量拉取）
-支持股票和 ETF 数据拉取，通过 --pool_type 参数切换
+数据拉取调度器（优化版：支持时间分段、重试与冷却）
+支持股票和 ETF 数据拉取，通过 --pool_type 和 --time_split 参数控制
 """
 
 import argparse
 import sys
 from pathlib import Path
 from datetime import datetime
+from dateutil.relativedelta import relativedelta  # 需要安装：pip install python-dateutil
 import pandas as pd
 from db.database import SQLiteDB
 
@@ -16,10 +17,10 @@ from data.sources import TushareSource
 from data.cache import DataCache
 from data.calendar import TradingCalendar
 from config import TS_TOKEN
+import time
 
 
 def get_stock_pool():
-    """动态导入 stock_pool.py 中的 STOCK_POOL 列表"""
     try:
         from stock_pool import STOCK_POOL
         return STOCK_POOL
@@ -29,7 +30,6 @@ def get_stock_pool():
 
 
 def get_etf_pool():
-    """动态导入 etf_pool.py 中的 ETF_POOL 列表"""
     try:
         from etf_pool import ETF_POOL
         return ETF_POOL
@@ -50,7 +50,7 @@ class DataFetcher:
     # ==================== 股票拉取 ====================
 
     def fetch_incremental(self, symbols: list = None):
-        """增量拉取股票数据"""
+        """增量拉取股票数据（按日拉取全市场，避免代码拼接导致的截断）"""
         if symbols is None:
             symbols = get_stock_pool()
 
@@ -64,7 +64,7 @@ class DataFetcher:
 
         if last_date_global is None:
             print("本地无股票数据，将执行全量拉取...")
-            self.fetch_full(symbols)
+            self.fetch_full_all(symbols)  # 调用完善的全量拉取
             return
 
         try:
@@ -83,29 +83,28 @@ class DataFetcher:
             return
 
         print(f"增量拉取开始：从 {start_date} 到 {end_date_str}，共 {len(trade_dates)} 个交易日，"
-              f"股票池 {len(symbols)} 只")
+            f"股票池 {len(symbols)} 只")
 
         total_added = 0
         for date_obj in trade_dates:
             date_str = date_obj.strftime("%Y%m%d")
-            date_date = date_obj.strftime("%Y-%m-%d")
             print(f"拉取交易日 {date_str} ...")
 
-            # 日线
-            df_daily = self.source.fetch_daily(symbols, date_str, date_str)
+            # 日线：按日获取全市场，再过滤池子
+            df_daily = self.source.fetch_daily_by_date(date_str, symbols)
             if not df_daily.empty:
                 self.cache.save_daily_batch(df_daily)
                 total_added += len(df_daily)
                 print(f"  日线: {len(df_daily)} 条")
 
-            # 复权因子
-            df_factor = self.source.fetch_adjust_factor_by_date(date_str)
+            # 复权因子：按日获取全市场
+            df_factor = self.source.fetch_adjust_factor_by_date(date_str, symbols)
             if not df_factor.empty:
                 self.cache.save_adjust_factor_batch(df_factor)
                 print(f"  复权因子: {len(df_factor)} 条")
 
-            # daily_basic
-            df_basic = self.source.fetch_daily_basic(symbols, date_str, date_str)
+            # 每日基本面：按日获取全市场
+            df_basic = self.source.fetch_daily_basic_by_date(date_str, symbols)
             if not df_basic.empty:
                 self.cache.save_daily_basic_batch(df_basic)
                 print(f"  daily_basic: {len(df_basic)} 条")
@@ -115,10 +114,11 @@ class DataFetcher:
         self.cache.set_global_last_date(latest_trade_day)
         print(f"增量拉取完成，共新增日线记录 {total_added} 条。")
 
-    def fetch_full(self, symbols: list = None, start_date: str = "20100101", end_date: str = None):
+    def fetch_full(self, symbols: list = None, start_date: str = "20100101", end_date: str = None,
+                   time_split: str = "year"):
         """
-        全量拉取股票数据（按年批量）
-        包含详细的调试日志，用于诊断数据缺失原因。
+        全量拉取股票数据（支持按年/季度/月分段）
+        time_split: 'year', 'quarter', 'month'，默认 'year' 保持向后兼容
         """
         if symbols is None:
             symbols = get_stock_pool()
@@ -126,68 +126,58 @@ class DataFetcher:
         if end_date is None:
             end_date = datetime.today().strftime("%Y%m%d")
 
-        start_year = int(start_date[:4])
-        end_year = int(end_date[:4])
-
-        print(f"全量拉取: {start_date} ~ {end_date}，按年分批，股票池 {len(symbols)} 只")
+        print(f"全量拉取: {start_date} ~ {end_date}，股票池 {len(symbols)} 只，时间分段: {time_split}")
         total_added = 0
 
-        # 导入 SQLiteDB 用于调试查询
-        from db.database import SQLiteDB
+        # 生成时间区间列表
+        chunks = self._generate_time_chunks(start_date, end_date, time_split)
 
-        for year in range(start_year, end_year + 1):
-            year_start = max(start_date, f"{year}0101")
-            year_end = min(end_date, f"{year}1231")
-            print(f"拉取 {year} 年 ({year_start}-{year_end}) ...")
+        for chunk_start, chunk_end in chunks:
+            print(f"拉取时间段 {chunk_start} ~ {chunk_end} ...")
 
-            # ---------- 1. 拉取日线 ----------
-            df_daily = self.source.fetch_daily(symbols, year_start, year_end)
+            # 日线
+            df_daily = self.source.fetch_daily(symbols, chunk_start, chunk_end)
             if df_daily.empty:
-                print(f"  {year} 年日线无数据")
+                print(f"  该时间段日线无数据")
             else:
-                # 记录本次拉取到的股票和记录数
                 stocks_in_response = df_daily['ts_code'].nunique()
                 records_in_response = len(df_daily)
                 print(f"  [调试] 请求返回 {records_in_response} 条记录，涉及 {stocks_in_response} 只股票")
 
-                # 找出池子中有但响应中缺失的股票
                 missing_stocks = set(symbols) - set(df_daily['ts_code'].unique())
                 if missing_stocks:
                     print(f"  [调试] 请求返回中缺失 {len(missing_stocks)} 只股票，前10只: {list(missing_stocks)[:10]}")
 
-                # 保存到数据库
                 self.cache.save_daily_batch(df_daily)
                 total_added += records_in_response
                 print(f"  日线: {records_in_response} 条")
                 self._batch_update_meta(df_daily)
 
-                # ---------- 数据库验证 ----------
+                # 数据库验证
                 db = SQLiteDB(self.db_path)
                 db.connect()
-                # 查询该年范围内已有数据的股票数
                 df_check = db.query(
                     "SELECT COUNT(DISTINCT ts_code) as cnt FROM daily_raw WHERE trade_date >= ? AND trade_date <= ?",
-                    (year_start, year_end)
+                    (chunk_start, chunk_end)
                 )
                 saved_stocks = df_check.iloc[0]['cnt'] if not df_check.empty else 0
-                print(f"  [调试] 保存后该年数据库中股票数: {saved_stocks}")
+                print(f"  [调试] 保存后该时段数据库中股票数: {saved_stocks}")
                 db.close()
 
-            # ---------- 2. 复权因子 ----------
+            # 复权因子（针对该时段过滤）
             df_factor = self.source.fetch_adjust_factor(symbols=symbols)
             if not df_factor.empty:
-                # 按年份过滤
-                df_factor = df_factor[(df_factor["trade_date"] >= year_start) & (df_factor["trade_date"] <= year_end)]
+                df_factor = df_factor[(df_factor["trade_date"] >= chunk_start) & (df_factor["trade_date"] <= chunk_end)]
                 if not df_factor.empty:
                     self.cache.save_adjust_factor_batch(df_factor)
                     print(f"  复权因子: {len(df_factor)} 条")
                 else:
-                    print(f"  复权因子: 该年无数据")
+                    print(f"  复权因子: 该时段无数据")
             else:
                 print(f"  复权因子: 请求返回空")
 
-            # ---------- 3. daily_basic ----------
-            df_basic = self.source.fetch_daily_basic(symbols, year_start, year_end)
+            # daily_basic
+            df_basic = self.source.fetch_daily_basic(symbols, chunk_start, chunk_end)
             if not df_basic.empty:
                 self.cache.save_daily_basic_batch(df_basic)
                 print(f"  daily_basic: {len(df_basic)} 条")
@@ -197,10 +187,75 @@ class DataFetcher:
         self.cache.set_global_last_date(pd.to_datetime(end_date))
         print(f"全量拉取完成，共新增日线记录 {total_added} 条。")
 
+    def fetch_full_by_dates(self, symbols: list = None, start_date: str = "20200101", end_date: str = None):
+        """
+        全量拉取（按交易日逐个进行，彻底避免记录截断）
+        """
+        if symbols is None:
+            symbols = get_stock_pool()
+        if end_date is None:
+            end_date = datetime.today().strftime("%Y%m%d")
+
+        trade_dates = self.calendar.get_trading_days(start_date, end_date)
+        print(f"按日全量拉取: {start_date} ~ {end_date}，共 {len(trade_dates)} 个交易日，股票池 {len(symbols)} 只")
+        total_added = 0
+
+        for idx, date_obj in enumerate(trade_dates, 1):
+            date_str = date_obj.strftime("%Y%m%d")
+            if idx % 20 == 0 or idx == 1:   # 每20天打印一次进度
+                print(f"  进度: {idx}/{len(trade_dates)} 交易日 {date_str}")
+            df_daily = self.source.fetch_daily_by_date(date_str, symbols)
+            if not df_daily.empty:
+                self.cache.save_daily_batch(df_daily)
+                total_added += len(df_daily)
+                self._batch_update_meta(df_daily)
+            # 每日请求后的间隔由 TushareSource 内部的 SLEEP_RANGE 控制（已在 _clean_daily_data 或 batch_request 中处理，这里可额外加轻微延迟）
+            time.sleep(0.2)   # 额外微小延迟，避免极快连续请求
+
+        self.cache.set_global_last_date(pd.to_datetime(end_date))
+        print(f"按日全量拉取完成，共新增日线记录 {total_added} 条。")
+
+    def _generate_time_chunks(self, start_date: str, end_date: str, split: str):
+        """
+        生成 (chunk_start, chunk_end) 列表，格式均为 YYYYMMDD
+        split: 'year', 'quarter', 'month'
+        """
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date)
+        chunks = []
+
+        if split == 'year':
+            for year in range(start_dt.year, end_dt.year + 1):
+                y_start = max(start_date, f"{year}0101")
+                y_end = min(end_date, f"{year}1231")
+                chunks.append((y_start, y_end))
+        elif split == 'quarter':
+            current = start_dt
+            while current <= end_dt:
+                quarter_start = current
+                # 计算本季度结束日期
+                quarter_end = (quarter_start + pd.DateOffset(months=3)) - pd.DateOffset(days=1)
+                if quarter_end > end_dt:
+                    quarter_end = end_dt
+                chunks.append((quarter_start.strftime("%Y%m%d"), quarter_end.strftime("%Y%m%d")))
+                current = quarter_end + pd.DateOffset(days=1)
+        elif split == 'month':
+            current = start_dt
+            while current <= end_dt:
+                month_start = current
+                # 本月最后一天
+                month_end = (month_start + pd.DateOffset(months=1)) - pd.DateOffset(days=1)
+                if month_end > end_dt:
+                    month_end = end_dt
+                chunks.append((month_start.strftime("%Y%m%d"), month_end.strftime("%Y%m%d")))
+                current = month_end + pd.DateOffset(days=1)
+        else:
+            # 默认按年
+            return self._generate_time_chunks(start_date, end_date, 'year')
+        return chunks
+
     def fetch_repair(self, symbols: list = None, start_date: str = "20220101"):
-        """
-        补全模式：按年检查每只股票在数据库中的缺失情况，仅拉取缺失年份的数据
-        """
+        """补全模式：按年检查缺失，仅拉取缺失年份的数据（保留原有逻辑）"""
         if symbols is None:
             symbols = get_stock_pool()
         if not symbols:
@@ -218,11 +273,9 @@ class DataFetcher:
         db.connect()
 
         for year in range(start_year, end_year + 1):
-            # 数据库中的日期格式为 YYYY-MM-DD
             year_start_db = f"{year}-01-01"
             year_end_db = f"{year}-12-31"
 
-            # 查询该年内已经有记录的股票
             sql = """
                 SELECT DISTINCT ts_code FROM daily_raw
                 WHERE trade_date >= ? AND trade_date <= ?
@@ -230,14 +283,12 @@ class DataFetcher:
             df_exist = db.query(sql, (year_start_db, year_end_db))
             exist_codes = set(df_exist['ts_code'].tolist()) if not df_exist.empty else set()
 
-            # 需要补拉的股票：池子里有，但该年没记录的
             need_repair = [s for s in symbols if s not in exist_codes]
             if not need_repair:
                 print(f"{year} 年没有缺失，跳过。")
                 continue
 
             print(f"{year} 年缺失数据股票数: {len(need_repair)}，开始补拉...")
-            # fetch_daily 仍使用 YYYYMMDD 格式
             year_start_fetch = f"{year}0101"
             year_end_fetch = f"{year}1231"
             df_daily = self.source.fetch_daily(need_repair, year_start_fetch, year_end_fetch)
@@ -247,12 +298,10 @@ class DataFetcher:
                 print(f"  补全日线: {len(df_daily)} 条")
                 self._batch_update_meta(df_daily)
             else:
-                print(f"  该年无数据返回（可能不存在或权限不足）")
+                print(f"  该年无数据返回")
 
-            # 可选：补全复权因子（若需要）
             df_factor = self.source.fetch_adjust_factor(symbols=need_repair)
             if not df_factor.empty:
-                # 过滤出该年范围内的因子
                 df_factor = df_factor[(df_factor['trade_date'] >= year_start_db) & (df_factor['trade_date'] <= year_end_db)]
                 if not df_factor.empty:
                     self.cache.save_adjust_factor_batch(df_factor)
@@ -261,13 +310,11 @@ class DataFetcher:
         db.close()
         print(f"补全完成，共新增日线记录 {total_added} 条。")
 
-    # ==================== ETF 拉取（新增） ====================
-
+    # ==================== ETF 拉取 ====================
     def fetch_etf_incremental(self, symbols: list = None):
-        """增量拉取 ETF 数据"""
+        """增量拉取 ETF 数据（逐只，已加入重试）"""
         if symbols is None:
             symbols = get_etf_pool()
-
         if not symbols:
             print("ETF 池为空，退出。")
             return
@@ -302,9 +349,7 @@ class DataFetcher:
         total_added = 0
         for date_obj in trade_dates:
             date_str = date_obj.strftime("%Y%m%d")
-            date_date = date_obj.strftime("%Y-%m-%d")
             print(f"拉取 ETF 交易日 {date_str} ...")
-
             df_etf = self.source.fetch_etf_daily(symbols, date_str, date_str)
             if not df_etf.empty:
                 self.cache.save_etf_daily_batch(df_etf)
@@ -319,13 +364,11 @@ class DataFetcher:
         """全量拉取 ETF 数据（按年批量）"""
         if symbols is None:
             symbols = get_etf_pool()
-
         if end_date is None:
             end_date = datetime.today().strftime("%Y%m%d")
 
         start_year = int(start_date[:4])
         end_year = int(end_date[:4])
-
         print(f"ETF 全量拉取: {start_date} ~ {end_date}，按年分批，ETF 池 {len(symbols)} 只")
         total_added = 0
 
@@ -333,7 +376,6 @@ class DataFetcher:
             year_start = max(start_date, f"{year}0101")
             year_end = min(end_date, f"{year}1231")
             print(f"拉取 ETF {year} 年 ({year_start}-{year_end}) ...")
-
             df_etf = self.source.fetch_etf_daily(symbols, year_start, year_end)
             if df_etf.empty:
                 print(f"  {year} 年 ETF 日线无数据")
@@ -347,9 +389,7 @@ class DataFetcher:
         print(f"ETF 全量拉取完成，共新增记录 {total_added} 条。")
 
     # ==================== 通用辅助 ====================
-
     def _batch_update_meta(self, df_daily: pd.DataFrame):
-        """从日线数据中提取每只证券的最新交易日期，批量更新 meta 表"""
         if df_daily.empty:
             return
         meta_update = df_daily.groupby("ts_code")["trade_date"].max().reset_index()
@@ -358,22 +398,87 @@ class DataFetcher:
             self.cache.update_meta(row["ts_code"], last_date_str, None)
 
 
+    def fetch_full_daily_basic_by_dates(self, symbols=None, start_date='20200101', end_date=None):
+        if symbols is None:
+            symbols = get_stock_pool()
+        if end_date is None:
+            end_date = datetime.today().strftime("%Y%m%d")
+        trade_dates = self.calendar.get_trading_days(start_date, end_date)
+        print(f"按日补全 daily_basic: {start_date}~{end_date}，共 {len(trade_dates)} 交易日")
+        total_added = 0
+        for idx, date_obj in enumerate(trade_dates, 1):
+            date_str = date_obj.strftime("%Y%m%d")
+            if idx % 20 == 0:
+                print(f"  进度: {idx}/{len(trade_dates)} {date_str}")
+            df_basic = self.source.fetch_daily_basic_by_date(date_str, symbols)
+            if not df_basic.empty:
+                self.cache.save_daily_basic_batch(df_basic)
+                total_added += len(df_basic)
+            time.sleep(0.3)  # 适当频率
+        print(f"daily_basic 补全完成，新增 {total_added} 条")
+
+    def fetch_full_all(self, symbols=None, start_date='20200101', end_date=None):
+        """
+        全量拉取（按交易日，一次性获取 daily_raw、daily_basic、adjust_factor）
+        """
+        if symbols is None:
+            symbols = get_stock_pool()
+        if end_date is None:
+            end_date = datetime.today().strftime("%Y%m%d")
+
+        trade_dates = self.calendar.get_trading_days(start_date, end_date)
+        print(f"全量拉取（日线+基本面+复权因子）: {start_date}~{end_date}, 共 {len(trade_dates)} 天, 股票 {len(symbols)} 只")
+        
+        total_daily = total_basic = total_adj = 0
+        for idx, date_obj in enumerate(trade_dates, 1):
+            date_str = date_obj.strftime("%Y%m%d")
+            if idx % 20 == 0 or idx == 1:
+                print(f"进度: {idx}/{len(trade_dates)} {date_str}")
+            
+            # 拉取日线
+            df_daily = self.source.fetch_daily_by_date(date_str, symbols)
+            if not df_daily.empty:
+                self.cache.save_daily_batch(df_daily)
+                total_daily += len(df_daily)
+                self._batch_update_meta(df_daily)
+            
+            # 拉取基本面
+            df_basic = self.source.fetch_daily_basic_by_date(date_str, symbols)
+            if not df_basic.empty:
+                self.cache.save_daily_basic_batch(df_basic)
+                total_basic += len(df_basic)
+            
+            # 拉取复权因子（每天可能只有少量除权股，但也要拉）
+            df_adj = self.source.fetch_adjust_factor_by_date(date_str, symbols)
+            if not df_adj.empty:
+                self.cache.save_adjust_factor_batch(df_adj)
+                total_adj += len(df_adj)
+            
+            time.sleep(0.3)  # 控制频率
+
+        self.cache.set_global_last_date(pd.to_datetime(end_date))
+        print(f"完成：日线 {total_daily} 条, 基本面 {total_basic} 条, 复权因子 {total_adj} 条")
+
+
 def main():
     parser = argparse.ArgumentParser(description="A股数据拉取工具（支持股票和ETF）")
     parser.add_argument("--mode", choices=["incremental", "full", "repair"], default="incremental",
-                        help="拉取模式：incremental(增量)、full(全量)、repair(补全缺失)")
+                        help="拉取模式")
     parser.add_argument("--pool_type", choices=["stock", "etf"], default="stock",
-                        help="拉取类型：stock(股票) 或 etf(ETF)")
+                        help="拉取类型")
     parser.add_argument("--symbols", type=str, default=None,
                         help="指定代码，逗号分隔")
     parser.add_argument("--start", type=str, default="20100101",
                         help="全量/补全模式下的开始日期 (YYYYMMDD)")
     parser.add_argument("--end", type=str, default=None,
                         help="全量模式下的结束日期 (YYYYMMDD)")
+    parser.add_argument("--time_split", choices=["year", "quarter", "month"], default="year",
+                        help="全量拉取时的时间分段粒度，降低单次请求数据量 (默认 year，仅在 --legacy 时有效)")
+    parser.add_argument("--legacy", action="store_true", help="全量拉取使用旧的分段方式（按年/季度/月）")
 
     args = parser.parse_args()
 
-    # 根据 pool_type 确定代码列表
+    # 确定股票/ETF 代码列表
     if args.symbols:
         symbols = [s.strip() for s in args.symbols.split(",")]
     else:
@@ -388,24 +493,37 @@ def main():
 
     fetcher = DataFetcher()
 
+    # ========================= ETF 分支 =========================
     if args.pool_type == "etf":
         if args.mode == "incremental":
             fetcher.fetch_etf_incremental(symbols)
         elif args.mode == "full":
             fetcher.fetch_etf_full(symbols, start_date=args.start, end_date=args.end)
-        else:  # repair mode
-            print("错误：ETF 暂不支持 repair 模式，请使用 stock 池或手动执行全量拉取。")
-            return
-    else:  # stock pool
-        if args.mode == "incremental":
-            fetcher.fetch_incremental(symbols)
-        elif args.mode == "full":
-            fetcher.fetch_full(symbols, start_date=args.start, end_date=args.end)
-        elif args.mode == "repair":
-            fetcher.fetch_repair(symbols, start_date=args.start)
         else:
-            print("未知模式。")
+            print("错误：ETF 暂不支持 repair 模式，请使用 stock 池或手动执行。")
             return
+        return  # ETF 分支结束
+
+    # ========================= 股票分支 =========================
+    if args.mode == "incremental":
+        fetcher.fetch_incremental(symbols)
+
+    elif args.mode == "full":
+        if args.legacy:
+            # 旧版：按年/季度/月分段拉取（仅日线，不包括 basic 和 adj_factor 的完整保护）
+            fetcher.fetch_full(symbols, start_date=args.start, end_date=args.end,
+                               time_split=args.time_split)
+        else:
+            # 新版默认：按交易日拉取，一次性获取 daily_raw、daily_basic、adjust_factor
+            # 彻底解决数据截断与缺失
+            fetcher.fetch_full_all(symbols, start_date=args.start, end_date=args.end)
+
+    elif args.mode == "repair":
+        fetcher.fetch_repair(symbols, start_date=args.start)
+
+    else:
+        print("未知模式。")
+
 
 if __name__ == "__main__":
     main()
