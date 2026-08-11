@@ -11,24 +11,35 @@ python -m data.fetcher --mode full --pool_type etf --start 20220101
 python -m data.fetcher --mode incremental --pool_type etf
 
 
+------------------------------------------------------------------------------------------
 
 #生成全A个股代码
 python tools/generate_stock_pool_all.py
 
+#按每个交易日拉取全市场数据
+python -m data.fetcher --mode full --start 20250125
+
 #时间区间灵活组合 --start 和 --end
-python -m data.fetcher --mode full --start 20260301 --end 20260608
+python -m data.fetcher --mode full --start 202501201 --end 20260610
+#数据量大时，可以切分数据块，按季度或者月
+python -m data.fetcher --mode full --start 20260101 --time_split quarter
+python -m data.fetcher --mode full --start 202501201 --time_split month
 
 # 增量更新股票池
 python -m data.fetcher --mode incremental
 
+------------------------------------------------------------------------------------------
 #验证数据库文件的完整性
 python check_db_completeness.py
 
-#数据补全模式
-python -m data.fetcher --mode repair --start 20260101
+#验证数据表格
+python check_all_tables.py
 
-# 运行所有策略（根据实时数据）
-python main_live.py
+
+------------------------------------------------------------------------------------------
+
+#数据补全模式
+python -m data.fetcher --mode repair --start 20250901
 
 # 运行所有策略
 python main.py

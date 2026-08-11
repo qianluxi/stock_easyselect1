@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDEs
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Environment
+venv/
+env/
+ENV/
+
+# 本地数据库（159MB，不入库；数据可通过 data/fetcher.py 重新拉取）
+db/stock.db
+*.db-wal
+*.db-shm
+
+# Office 打开文件时的临时锁文件
+~$*

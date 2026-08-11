@@ -38,10 +38,10 @@ def main():
 
     # 定义各策略展示列
     display_columns_map = {
-        "healthy_volume_rise": ["ts_code", "pct_chg", "volume_ratio", "turnover", "close", "circ_mv", "pe_ttm"],
+        "healthy_volume_rise": ["ts_code", "pct_chg", "volume_ratio", "turnover_rate", "close", "circ_mv", "pe_ttm"],
         "momentum_breakout": ["ts_code", "ret_5", "vol_ratio_5", "pct_chg", "close"],
         "ma_golden_cross": ["ts_code", "ma_5", "ma_20", "pct_chg", "volume_ratio"],
-        "low_vol_high_turnover": ["ts_code", "volatility_20", "turnover", "pct_chg"],
+        "low_vol_high_turnover": ["ts_code", "volatility_20", "turnover_rate", "pct_chg"],
         "atr_breakout": ["ts_code", "atr_14", "pct_chg", "close"],
         "rsi_oversold_rebound": ["ts_code", "rsi_14", "pct_chg", "close"],
         "macd_bullish": ["ts_code", "dif", "dea", "macd", "pct_chg"],

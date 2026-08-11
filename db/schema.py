@@ -191,6 +191,27 @@ CREATE TABLE IF NOT EXISTS adjust_factor (
 """
 
 # =========================
+# ETF 日线表（仅量价，无市值换手率）
+# =========================
+
+ETF_DAILY_SQL = """
+CREATE TABLE IF NOT EXISTS etf_daily (
+    ts_code       TEXT NOT NULL,
+    trade_date    TEXT NOT NULL,
+    open          REAL,
+    high          REAL,
+    low           REAL,
+    close         REAL,
+    pre_close     REAL,
+    change        REAL,
+    pct_chg       REAL,
+    vol           REAL,
+    amount        REAL,
+    PRIMARY KEY (ts_code, trade_date)
+);
+"""
+
+# =========================
 # 所有表定义列表（供 database.py 调用）
 # =========================
 
@@ -202,6 +223,7 @@ ALL_SCHEMA_SQL = [
     SYNC_LOG_SQL,               # 保留兼容
     TRADING_CALENDAR_SQL,
     ADJUST_FACTOR_SQL,          # 新增
+    ETF_DAILY_SQL,              # ETF 日线
     FACTOR_VALUES_SQL,
     FEATURE_VALUES_SQL
 ]

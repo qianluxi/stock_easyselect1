@@ -56,13 +56,8 @@ class StockScreener:
             return
         if columns is None:
             columns = [
-                "ts_code", "pct_chg", "volume_ratio", "turnover",
+                "ts_code", "pct_chg", "volume_ratio", "turnover_rate",
                 "close", "circ_mv", "pe_ttm"
             ]
         available = [col for col in columns if col in df.columns]
         print(df[available].to_string(index=False))
-
-    def set_live_loader(self, live_loader):
-        """切换到实时数据加载器"""
-        self.runner.loader = live_loader
-        print("已切换至 efinance 实时行情模式")

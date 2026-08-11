@@ -102,6 +102,11 @@ class DataLoader:
         if pool_type != "etf" and include_basic:
             df_basic = self.cache.load_daily_basic(symbols, start_str, end_str)
             if not df_basic.empty:
+                # daily_raw 与 daily_basic 存在同名列（total_mv / turnover_rate），
+                # 以 daily_basic 为准，先去掉日线侧的重复列，避免 merge 产生 _x/_y 后缀
+                overlap_cols = [c for c in ("total_mv", "turnover_rate") if c in df.columns and c in df_basic.columns]
+                if overlap_cols:
+                    df = df.drop(columns=overlap_cols)
                 df_basic = df_basic.rename(columns={"ts_code": "symbol"})
                 df_basic["trade_date"] = pd.to_datetime(df_basic["trade_date"])
                 df = df.merge(df_basic, on=["symbol", "trade_date"], how="left")

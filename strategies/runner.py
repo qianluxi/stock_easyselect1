@@ -1,5 +1,6 @@
 """
 策略运行器（增强版：支持股票/ETF 双池，自动处理列间比较，补齐关键列）
+新增：通过 config.USE_RET40_FILTER 全局控制 ret_40 过滤的启用/禁用
 """
 import pandas as pd
 import numpy as np
@@ -8,6 +9,7 @@ from core.filter_engine import FilterEngine
 from core.factor_engine import FactorEngine
 from data.loader import DataLoader
 from data.calendar import TradingCalendar
+from strategies.configs import USE_RET40_FILTER  # 全局开关
 
 
 class StrategyRunner:
@@ -18,6 +20,24 @@ class StrategyRunner:
         self.calendar = TradingCalendar(db_path)
         self.filter_engine = FilterEngine()
         self.default_pool_type = pool_type
+
+    @staticmethod
+    def _limit_up_threshold(ts_code: str) -> float:
+        """
+        按板块返回涨停判定阈值（留 0.2 个点的缓冲，用于过滤已涨停的股票）
+        - 北交所：30%（43/83/87/92 开头）
+        - 创业板（300/301.SZ）、科创板（688/689.SH）：20%
+        - 其余沪深主板：10%
+        - ETF 默认按 10% 处理（科创/创业板 ETF 为 20%，此处不细分）
+        """
+        code = str(ts_code).upper()
+        if code.endswith(".BJ") or code.startswith(("4", "8", "92")):
+            return 29.8
+        if (code.startswith(("300", "301")) and code.endswith(".SZ")) or (
+            code.startswith(("688", "689")) and code.endswith(".SH")
+        ):
+            return 19.8
+        return 9.8
 
     def run(self, config: Dict[str, Any]) -> pd.DataFrame:
         # 0. 确定池类型
@@ -45,7 +65,6 @@ class StrategyRunner:
         )
         if df.empty:
             return pd.DataFrame()
-        
 
         # 3. 统一列名
         df = df.reset_index()
@@ -55,6 +74,9 @@ class StrategyRunner:
             df.rename(columns={'volume': 'vol'}, inplace=True)
         if 'turnover_rate' not in df.columns:
             df['turnover_rate'] = np.nan
+
+        # 填充收盘价，消除停牌导致的缺失，保证收益率因子可计算
+        df['close'] = df.groupby('ts_code')['close'].ffill()
 
         # 4. 计算因子
         factor_list = config.get("factors", [])
@@ -68,6 +90,10 @@ class StrategyRunner:
 
         # 6. 获取过滤条件
         filters = config.get("filters", [])
+
+        # 全局开关：若禁用 ret_40 过滤，则移除所有 ret_40 条件
+        if not USE_RET40_FILTER:
+            filters = [cond for cond in filters if cond[0] != "ret_40"]
 
         # 7. 清理无法计算 ret 因子的股票（避免 NaN 导致过滤失效）
         for cond in filters:
@@ -113,11 +139,11 @@ class StrategyRunner:
         # 9. 涨停过滤
         exclude_limit_up = config.get("exclude_limit_up")
         if exclude_limit_up and not df.empty:
-            if 'pct_chg' in df.columns:
-                if exclude_limit_up == 'all' or exclude_limit_up == 'strict':
-                    df = df[df['pct_chg'] < 9.8]
+            if 'pct_chg' in df.columns and 'ts_code' in df.columns:
+                threshold = df['ts_code'].map(self._limit_up_threshold)
+                df = df[df['pct_chg'] < threshold]
             else:
-                print("警告：缺少 'pct_chg' 列，涨停过滤跳过")
+                print("警告：缺少 'pct_chg' 或 'ts_code' 列，涨停过滤跳过")
 
         # 10. 排序取前 N
         sort_by = config.get("sort_by")
@@ -130,20 +156,18 @@ class StrategyRunner:
 
         return df
 
-    # def _get_pool(self, pool_type: str = "stock"):
-    #     if pool_type == "etf":
-    #         try:
-    #             from etf_pool import ETF_POOL
-    #             return ETF_POOL
-    #         except ImportError:
-    #             print("警告：未找到 etf_pool.py，ETF 池为空")
-    #             return []
-    #     else:
-    #         try:
-    #             from stock_pool import STOCK_POOL
-    #             return STOCK_POOL
-    #         except ImportError:
-    #             return []
-
     def _get_pool(self, pool_type: str = "stock"):
-        return ['000001.SZ', '000002.SZ', ...]  # 粘贴全部 92 只代码
+        """根据池类型返回对应的股票/ETF 列表"""
+        if pool_type == "etf":
+            try:
+                from etf_pool import ETF_POOL
+                return ETF_POOL
+            except ImportError:
+                print("警告：未找到 etf_pool.py，ETF 池为空")
+                return []
+        else:
+            try:
+                from stock_pool import STOCK_POOL
+                return STOCK_POOL
+            except ImportError:
+                return []

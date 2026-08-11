@@ -19,85 +19,12 @@ class DataCache:
         self._ensure_tables()
 
     def _ensure_tables(self):
-        """创建必要的表结构（如果不存在）"""
+        """
+        表结构统一由 db/schema.py 管理（SQLiteDB.connect -> init_db），
+        此处不再重复定义表，避免两处建表语句漂移。
+        """
         db = SQLiteDB(self.db_path)
-        db.connect()
-
-        # 原始日线表（股票）
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS daily_raw (
-                ts_code       TEXT NOT NULL,
-                trade_date    TEXT NOT NULL,
-                open          REAL,
-                high          REAL,
-                low           REAL,
-                close         REAL,
-                pre_close     REAL,
-                change        REAL,
-                pct_chg       REAL,
-                vol           REAL,
-                amount        REAL,
-                total_mv      REAL,
-                turnover_rate REAL,
-                PRIMARY KEY (ts_code, trade_date)
-            )
-        """)
-
-        # 复权因子表
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS adjust_factor (
-                ts_code       TEXT NOT NULL,
-                trade_date    TEXT NOT NULL,
-                adj_factor    REAL NOT NULL,
-                PRIMARY KEY (ts_code, trade_date)
-            )
-        """)
-
-        # 每日基本面指标表
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS daily_basic (
-                ts_code           TEXT NOT NULL,
-                trade_date        TEXT NOT NULL,
-                total_mv          REAL,
-                circ_mv           REAL,
-                turnover_rate     REAL,
-                turnover_rate_f   REAL,
-                volume_ratio      REAL,
-                pe                REAL,
-                pe_ttm            REAL,
-                pb                REAL,
-                PRIMARY KEY (ts_code, trade_date)
-            )
-        """)
-
-        # ETF 日线表（仅量价，无市值换手率）
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS etf_daily (
-                ts_code       TEXT NOT NULL,
-                trade_date    TEXT NOT NULL,
-                open          REAL,
-                high          REAL,
-                low           REAL,
-                close         REAL,
-                pre_close     REAL,
-                change        REAL,
-                pct_chg       REAL,
-                vol           REAL,
-                amount        REAL,
-                PRIMARY KEY (ts_code, trade_date)
-            )
-        """)
-
-        # 元数据表：记录每只股票/ETF 的最新拉取状态，同时用 __GLOBAL__ 等特殊代码存全局日期
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS data_meta (
-                ts_code          TEXT PRIMARY KEY,
-                last_update_date TEXT,
-                row_count        INTEGER,
-                updated_at       TEXT
-            )
-        """)
-
+        db.connect()  # connect() 内部会执行 ALL_SCHEMA_SQL（含 etf_daily / data_meta）
         db.close()
 
     # ========================
