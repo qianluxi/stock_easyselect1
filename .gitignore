@@ -41,3 +41,9 @@ db/stock.db
 
 # Office 打开文件时的临时锁文件
 ~$*
+
+# 界面后台数据更新任务的临时日志
+_fetch_update*.log
+
+# 本地代理环境目录
+.agents/
